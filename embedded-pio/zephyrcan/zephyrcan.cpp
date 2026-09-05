@@ -1,5 +1,5 @@
 #include "zephyrcan.h"
 
-ZephyrCAN::ZephyrCAN(){
+ZephyrCAN::ZephyrCAN() {
     
 }

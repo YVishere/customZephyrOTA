@@ -1,8 +1,7 @@
 #include <stdio.h>
 #include "const.h"
 
-int main(void)
-{
+int main(void) {
     printf("Hello World\n", CONFIG_BOARD_TARGET);
     return 0;
 }
