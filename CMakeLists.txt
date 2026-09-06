@@ -12,6 +12,8 @@ target_include_directories(app
 target_sources(app 
     PRIVATE 
         src/main.cpp
+        src/examplecan.cpp
+        inc/examplecan.h
         inc/const.h
         embedded-pio/zephyrcan/zephyrcan.cpp
         embedded-pio/zephyrcan/zephyrcan.h
