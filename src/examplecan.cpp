@@ -7,7 +7,10 @@ void ExampleCAN::readHandler(struct can_frame * msg) {
     
 }
 
-int ExampleCAN::sendExampleData()
-{
+int ExampleCAN::sendExampleData() {
     return 0;
+}
+
+ErrorCode ExampleCAN::getCANStatus() {
+    return canStatus();
 }

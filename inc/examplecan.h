@@ -8,6 +8,7 @@ class ExampleCAN : public ZephyrCAN {
         ExampleCAN(const struct device *canDevice, uint32_t targetIDList[], size_t targetIDListSize);
         void readHandler(struct can_frame * msg);
         int sendExampleData();
+        ErrorCode getCANStatus();
 };
 
 #endif
