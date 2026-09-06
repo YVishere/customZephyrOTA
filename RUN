@@ -1,5 +1,5 @@
 cd <path_to_zephyrproject>
 activate python venv
 cd zephyr
-west build -b <board_name> <path_to_app>
+west build -b -p <board_name> --sysbuild <path_to_app>
 west flash

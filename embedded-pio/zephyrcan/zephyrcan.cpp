@@ -1,6 +1,3 @@
-#include <zephyr/device.h>
-#include <zephyr/drivers/can.h>
-
 #include "zephyrcan.h"
 
 #undef USING_CAN_FD
@@ -15,7 +12,7 @@
 #endif
 
 
-ZephyrCAN::ZephyrCAN(const struct device *canDevice, uint32_t targetIDList[], size_t targetIDListSize) : 
+ZephyrCAN::ZephyrCAN(const struct device * canDevice, const uint32_t targetIDList[], size_t targetIDListSize, uint32_t frequency) : 
     _canDevice(canDevice), _canStatus(OK) 
 {
     size_t i = 0;
@@ -31,6 +28,18 @@ ZephyrCAN::ZephyrCAN(const struct device *canDevice, uint32_t targetIDList[], si
         _canStatus = (can_add_rx_filter(_canDevice, rxCallbackBridge, this, &filter) < 0)? FAILED_TO_ADD_CAN_CALLBACK : OK;
         i++;
     }
+
+    if (_canStatus == OK && can_set_bitrate(canDevice, frequency) < 0) {
+        _canStatus = FAILED_TO_SET_CAN_BITRATE;
+    }
+}
+
+ErrorCode ZephyrCAN::begin() {
+    if (_canStatus == OK && can_start(_canDevice) < 0) {
+        _canStatus = FAILED_TO_START_CAN;
+    }
+
+    return _canStatus;
 }
 
 void ZephyrCAN::rxCallbackBridge(const struct device *dev, struct can_frame *frame, void *user_data)
@@ -49,7 +58,7 @@ int ZephyrCAN::sendMessage(uint32_t messageID, const uint8_t * data, int length,
 {
     struct can_frame frame;
     frame.id = messageID;
-    frame.flags = CAN_FRAME_FDF | CAN_FRAME_BRS;
+    frame.flags = _sendMessageFlag;
     frame.dlc = can_bytes_to_dlc(length);
     memcpy(frame.data, data, length);
 
