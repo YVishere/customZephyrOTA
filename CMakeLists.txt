@@ -1,12 +1,19 @@
 cmake_minimum_required(VERSION 3.28.0)
 
+list(
+    APPEND 
+    EXTRA_CONF_FILE
+        ${CMAKE_CURRENT_SOURCE_DIR}/embedded-pio/zephyrcan/zephyrcan.conf
+)
+
 find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(hello_world)
+project(canExample)
+
+add_subdirectory(embedded-pio/zephyrcan)
 
 target_include_directories(app 
     PRIVATE 
         inc
-        embedded-pio/zephyrcan
 )
 
 target_sources(app 
@@ -15,6 +22,9 @@ target_sources(app
         src/examplecan.cpp
         inc/examplecan.h
         inc/const.h
-        embedded-pio/zephyrcan/zephyrcan.cpp
-        embedded-pio/zephyrcan/zephyrcan.h
+)
+
+target_link_libraries(app
+    PRIVATE
+        zephyrcan
 )
