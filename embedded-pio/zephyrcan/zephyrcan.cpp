@@ -35,7 +35,7 @@ ZephyrCAN::ZephyrCAN(const struct device * canDevice, const uint32_t targetIDLis
             }
             else
             {
-                filterIDList.push_back(response);
+                _filterIDList.push_back(response);
             }
 
             i++;
@@ -52,12 +52,12 @@ ZephyrCAN::ZephyrCAN(const struct device * canDevice, const uint32_t targetIDLis
 }
 
 ZephyrCAN::~ZephyrCAN() {
-    for (auto const id : filterIDList) {
+    for (auto const id : _filterIDList) {
         can_remove_rx_filter(_canDevice, id);
     }
 }
 
-ErrorCode ZephyrCAN::begin() {
+CanErrorCode ZephyrCAN::begin() {
     if (_canStatus == OK && can_start(_canDevice) < 0) {
         _canStatus = FAILED_TO_START_CAN;
     }
@@ -73,7 +73,7 @@ void ZephyrCAN::rxCallbackBridge(const struct device *dev, struct can_frame *fra
     }
 }
 
-ErrorCode ZephyrCAN::canStatus() {
+CanErrorCode ZephyrCAN::canStatus() const{
     return _canStatus;
 }
 

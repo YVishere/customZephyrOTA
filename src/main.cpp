@@ -17,8 +17,6 @@ int main(void) {
         LOG_ERR("CAN init failed: %d", canBus.canStatus());
         return -1;
     }
-
-    LOG_INF("upload slot 0x%02x, active slot 0x%02x", flash_img_get_upload_slot(), boot_fetch_active_slot());
     
     while(1) {
         if (canBus.canStatus() != OK)

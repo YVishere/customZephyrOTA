@@ -16,7 +16,7 @@ typedef enum {
     FAILED_TO_START_CAN = 2,
     FAILED_TO_SET_CAN_BITRATE = 3,
     DEVICE_NOT_READY = 4,
-} ErrorCode;
+} CanErrorCode;
 
 class ZephyrCAN {
     public:
@@ -28,13 +28,13 @@ class ZephyrCAN {
         virtual void readHandler(struct can_frame * msg) = 0;
         int sendMessage(uint32_t messageID, const uint8_t * data, uint8_t length, int timeout = 10);
         
-        ErrorCode canStatus();
-        ErrorCode begin();
+        CanErrorCode canStatus() const;
+        CanErrorCode begin();
 
     private:
         const struct device *const _canDevice;
-        ErrorCode _canStatus;
-        vector<int> filterIDList;
+        CanErrorCode _canStatus;
+        vector<int> _filterIDList;
 
 };
 
