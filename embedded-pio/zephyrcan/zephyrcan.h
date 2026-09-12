@@ -11,7 +11,7 @@ using namespace std;
 #include <zephyr/drivers/can.h>
 
 typedef enum {
-    OK = 0,
+    CAN_OK = 0,
     FAILED_TO_ADD_CAN_CALLBACK = 1,
     FAILED_TO_START_CAN = 2,
     FAILED_TO_SET_CAN_BITRATE = 3,

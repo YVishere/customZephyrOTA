@@ -5,6 +5,7 @@
 #include <zephyr/dfu/mcuboot.h>
 #include "const.h"
 #include "examplecan.h"
+#include "zephyrethernet.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
@@ -13,13 +14,17 @@ int main(void) {
     ExampleCAN canBus(canDev, CAN_IDS, sizeof(CAN_IDS)/sizeof(CAN_IDS[0]), CAN_FREQUENCY);
     canBus.begin();
 
-    if (canBus.canStatus() != OK) {
+    if (canBus.canStatus() != CAN_OK) {
         LOG_ERR("CAN init failed: %d", canBus.canStatus());
         return -1;
     }
+
+    ZephyrEthernet ze;
+
+    LOG_INF("STatus %d", ze.ethernetStatus());
     
     while(1) {
-        if (canBus.canStatus() != OK)
+        if (canBus.canStatus() != CAN_OK)
         {
             break;
         }
