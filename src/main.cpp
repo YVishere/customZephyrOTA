@@ -4,6 +4,7 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/dfu/mcuboot.h>
 #include "const.h"
+#include "OTAP.h"
 #include "examplecan.h"
 #include "zephyrethernet.h"
 

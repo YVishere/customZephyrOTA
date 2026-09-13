@@ -22,6 +22,8 @@ target_sources(app
     PRIVATE 
         src/main.cpp
         src/examplecan.cpp
+        src/OTAP.cpp
+        inc/OTAP.h
         inc/examplecan.h
         inc/const.h
 )
