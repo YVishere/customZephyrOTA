@@ -5,9 +5,7 @@
 #include <stdint.h>
 #include <zephyr/kernel.h>
 #include <zephyr/net/net_pkt.h>
-extern "C" {
-    #include <zephyr/net/net_if.h>
-}
+#include <zephyr/net/net_if.h>
 #include <zephyr/net/ethernet.h>
 
 typedef enum{
@@ -21,36 +19,36 @@ typedef enum{
     FAILED_TO_ALLOCATE_CONTEXT = 7,
     FAILED_TO_BIND_CONTEXT = 8,
     FAILED_TO_BIND_REMOTE_CONTEXT = 9,
+    PACKET_READ_TIMEOUT = 10,
+    INTERFACE_NOT_FOUND = 11,
+    FAILED_TO_SET_IP_ADDR = 12,
 } EthernetErrorCode;
 
 class ZephyrEthernet {
     public:
-        explicit ZephyrEthernet();
+        ZephyrEthernet(const char * peerIP);
+        ZephyrEthernet();
+        ~ZephyrEthernet();
 
         EthernetErrorCode initEthernetDevice(bool setRemoteDestAddr = true);
-        void ethFreeMsg(struct EthMsg_t *msg);
         EthernetErrorCode ethernetStatus() const;
 
         /**
          * Blocks thread until fifo buffer sees a packet
          * 
          */
-        EthernetErrorCode getNextPacket(uint8_t * buffer, size_t bufferSize, k_timeout_t timeout = K_FOREVER);
+        EthernetErrorCode getNextPacket(uint8_t * buffer, size_t bufferSize, size_t * bytesRead, k_timeout_t timeout = K_FOREVER);
 
         /**
          * Returns an empty packet immediately if there is no packet in the queue
          * 
          */
-        EthernetErrorCode getNextPacketImmediate(uint8_t * buffer, size_t bufferSize);
+        EthernetErrorCode getNextPacketImmediate(uint8_t * buffer, size_t bufferSize, size_t * bytesRead);
         bool packetReadyFifo() const;
-
-        /**
-         * Returns the pointer to the queue
-         * 
-         */
-        void getPacketQueue();
         
     private:
+        EthernetErrorCode configureInterface(); 
+        void ethFreeMsg(struct EthMsg_t *msg);
         void setUDPContext(struct net_context *& udpContext, bool setRemoteDestAddr);
         static void rxCallbackBridge(struct net_context * context,
                                         struct net_pkt * pkt,
@@ -63,8 +61,9 @@ class ZephyrEthernet {
                                     union net_ip_header * ipHeader,
                                     union net_proto_header * protocolHeader,
                                     int status);
-
-        int _sockDescriptor;
+        
+        char _peerIP[NET_IPV4_ADDR_LEN];
+        struct net_context * _udpContext;
         EthernetErrorCode _ethernetStatus;
 };
 

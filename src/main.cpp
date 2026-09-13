@@ -21,14 +21,29 @@ int main(void) {
 
     ZephyrEthernet ze;
 
-    LOG_INF("STatus %d", ze.ethernetStatus());
+    if (ze.initEthernetDevice() != ETH_OK) {
+        LOG_ERR("Etherenet init failed: %d", ze.ethernetStatus());
+        return -1;
+    }
+
+    uint8_t rxBuf[256];
+    size_t rxLen;
+
+    LOG_INF("Status %d", ze.ethernetStatus());
     
     while(1) {
-        if (canBus.canStatus() != CAN_OK)
-        {
-            break;
+        // if (canBus.canStatus() != CAN_OK)
+        // {
+        //     break;
+        // }
+
+        EthernetErrorCode rc = ze.getNextPacket(rxBuf, sizeof(rxBuf), &rxLen, K_MSEC(1000));
+
+        if (rc == ETH_OK) {
+            LOG_HEXDUMP_INF(rxBuf, rxLen, "UDP payload");
+        } else if (rc != PACKET_READ_TIMEOUT) {
+            LOG_WRN("Ethernet read error: %d", rc);
         }
-        k_msleep(1000); 
     }
     
     return 0;

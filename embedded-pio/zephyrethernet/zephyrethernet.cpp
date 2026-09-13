@@ -1,11 +1,12 @@
 #include "zephyrethernet.h"
+#include <string.h>
 
 static const int ALIGN_BYTES = 4;
 static const int MAX_QUEUE_SIZE = 10;
-static const int ETHERNET_HEADER_LEN = 14;
 static const int LOCAL_PORT = 12345;
 static const int REMOTE_PORT = 12345;
-static constexpr char MCU_IP_ADDR[] = "192.168.1.67";
+static constexpr char MCU_IP_ADDR[] = "192.168.1.1";
+static constexpr char MCU_NETMASK[] = "255.255.255.0";
 
 struct EthMsg_t {
     void * fifo_reserved;   
@@ -15,45 +16,83 @@ struct EthMsg_t {
 K_FIFO_DEFINE(ethPacketFifo);
 K_MEM_SLAB_DEFINE(msgSlab, sizeof(struct EthMsg_t), MAX_QUEUE_SIZE, ALIGN_BYTES);
 
-ZephyrEthernet::ZephyrEthernet() : _ethernetStatus(ETH_OK) {}
+ZephyrEthernet::ZephyrEthernet(const char * peerIP) : _udpContext(nullptr), _ethernetStatus(ETH_OK) {
+    if (strlen(peerIP) < NET_IPV4_ADDR_LEN) {
+        strncpy(_peerIP, peerIP, NET_IPV4_ADDR_LEN);
+    }
+    else {
+        _peerIP[0] = '\0';
+    }
+}
+
+ZephyrEthernet::ZephyrEthernet() : _udpContext(nullptr), _ethernetStatus(ETH_OK) {
+    _peerIP[0] = '\0';
+}
+
+ZephyrEthernet::~ZephyrEthernet() {
+    if (_udpContext != nullptr) {
+        net_context_put(_udpContext);
+    }
+}
 
 EthernetErrorCode ZephyrEthernet::initEthernetDevice(bool setRemoteDestAddr){
+    if (configureInterface() != ETH_OK) {
+        return _ethernetStatus;
+    }
+    
     net_context * context;
     setUDPContext(context, setRemoteDestAddr);
 
     if (_ethernetStatus == ETH_OK && net_context_recv(context, rxCallbackBridge, K_NO_WAIT, this) < 0) {
         _ethernetStatus = FAILED_TO_SET_CALLBACK;
+        net_context_put(context);
         return _ethernetStatus;
+    }
+
+    if (_ethernetStatus == ETH_OK){
+        _udpContext = context;
     }
 
     return _ethernetStatus;
 }
 
-EthernetErrorCode ZephyrEthernet::getNextPacket(uint8_t * buffer, size_t bufferSize, k_timeout_t timeout) {
+EthernetErrorCode ZephyrEthernet::getNextPacket(uint8_t * buffer, size_t bufferSize, size_t * bytesRead, k_timeout_t timeout) {
+    if (bytesRead) {
+        *bytesRead = 0;
+    }
+
+    if (_ethernetStatus != ETH_OK) {
+        return _ethernetStatus;
+    }
+    
     struct EthMsg_t * ethMsg = (struct EthMsg_t *) k_fifo_get(&ethPacketFifo, timeout);
 
-    if (_ethernetStatus == PACKET_PARSING_ERROR || _ethernetStatus == PACKET_READ_ERROR) {
-        _ethernetStatus = ETH_OK;
+    if (!ethMsg) {
+        return PACKET_READ_TIMEOUT;
     }
 
-    if ((_ethernetStatus == ETH_OK) && ethMsg && ethMsg->pkt) {
-        net_pkt * pkt = ethMsg->pkt;
-        size_t frameLen = net_pkt_get_len(pkt);
-        net_pkt_cursor_init(pkt);
+    EthernetErrorCode readErrorCode = ETH_OK;
 
-        if (net_pkt_skip(pkt, ETHERNET_HEADER_LEN) != 0) {
-            _ethernetStatus = PACKET_PARSING_ERROR;
+    if (ethMsg->pkt) {
+        struct net_pkt * pkt = ethMsg->pkt;
+        size_t frameLenLeft = net_pkt_remaining_data(pkt);
+        size_t bytesToRead = MIN(frameLenLeft, bufferSize);
+        
+        if (net_pkt_read(pkt, buffer, bytesToRead) != 0) {
+            readErrorCode = PACKET_READ_ERROR;
         }
         else {
-            size_t bytesToRead = MIN(frameLen - ETHERNET_HEADER_LEN, bufferSize);
-            
-            if (net_pkt_read(pkt, buffer, bytesToRead) != 0) {
-                _ethernetStatus = PACKET_READ_ERROR;
+            if (bytesRead) {
+                *bytesRead = bytesToRead;
             }
         }
+
+        net_pkt_unref(pkt);
     }
 
-    return _ethernetStatus;
+    ethFreeMsg(ethMsg);
+
+    return readErrorCode;
 }
 
 void ZephyrEthernet::rxCallbackBridge(struct net_context * context,
@@ -65,10 +104,11 @@ void ZephyrEthernet::rxCallbackBridge(struct net_context * context,
 {
     ZephyrEthernet * instance = static_cast<ZephyrEthernet*>(user_data);
     
-    if (status == 0) {
-        if (instance != nullptr) {
-            instance->readHandler(context, pkt, ipHeader, protocolHeader, status);
-        }
+    if (status == 0 && instance != nullptr) {
+        instance->readHandler(context, pkt, ipHeader, protocolHeader, status);
+    }
+    else if (pkt != nullptr) {
+        net_pkt_unref(pkt);
     }
 }
 
@@ -78,32 +118,24 @@ void ZephyrEthernet::readHandler(struct net_context * context,
                                     union net_proto_header * protocolHeader,
                                     int status) 
 {
-    if ((_ethernetStatus == NULL_PACKET_SEEN) && pkt) {
-        _ethernetStatus = ETH_OK;
-    }
-    else
-    {
+    if (!pkt) {
         return;
     }
 
-    if (_ethernetStatus == ETH_OK)
-    {
-        if (pkt) {
-            struct EthMsg_t * msgWrapper;
-
-            if (k_mem_slab_alloc(&msgSlab, (void **)&msgWrapper, K_NO_WAIT) != 0) {
-                return; 
-            }
-
-            net_pkt_ref(pkt);
-            msgWrapper->pkt = pkt;
-            k_fifo_put(&ethPacketFifo, msgWrapper);
-        }
-        else {
-            _ethernetStatus = NULL_PACKET_SEEN;
-            return;
-        }
+    if (_ethernetStatus != ETH_OK) {
+        net_pkt_unref(pkt);
+        return;
     }
+
+    struct EthMsg_t * msgWrapper;
+
+    if (k_mem_slab_alloc(&msgSlab, (void **)&msgWrapper, K_NO_WAIT) != 0) {
+        net_pkt_unref(pkt);
+        return; 
+    }
+
+    msgWrapper->pkt = pkt;
+    k_fifo_put(&ethPacketFifo, msgWrapper);
 }
 
 EthernetErrorCode ZephyrEthernet::ethernetStatus() const {
@@ -121,8 +153,8 @@ bool ZephyrEthernet::packetReadyFifo() const {
     return !k_fifo_is_empty(&ethPacketFifo);
 }
 
-EthernetErrorCode ZephyrEthernet::getNextPacketImmediate(uint8_t * buffer, size_t bufferSize) {
-    return getNextPacket(buffer, bufferSize, K_NO_WAIT);
+EthernetErrorCode ZephyrEthernet::getNextPacketImmediate(uint8_t * buffer, size_t bufferSize, size_t * bytesRead) {
+    return getNextPacket(buffer, bufferSize, bytesRead, K_NO_WAIT);
 }
 
 void ZephyrEthernet::setUDPContext(struct net_context *& udpContext, bool setRemoteDestAddr) {
@@ -146,13 +178,13 @@ void ZephyrEthernet::setUDPContext(struct net_context *& udpContext, bool setRem
             return;
         }
 
-        if (setRemoteDestAddr) {
+        if (setRemoteDestAddr && (*_peerIP != '\0')) {
             struct sockaddr_in remoteAddr;
             memset(&remoteAddr, 0, sizeof(remoteAddr));
             remoteAddr.sin_family = AF_INET;
             remoteAddr.sin_port = htons(REMOTE_PORT);
              
-            if (net_addr_pton(AF_INET, MCU_IP_ADDR, &remoteAddr.sin_addr) != 0) {
+            if (net_addr_pton(AF_INET, _peerIP, &remoteAddr.sin_addr) != 0) {
                 _ethernetStatus = FAILED_TO_BIND_REMOTE_CONTEXT;
                 net_context_put(udpContext);
                 return;
@@ -169,4 +201,29 @@ void ZephyrEthernet::setUDPContext(struct net_context *& udpContext, bool setRem
     }
 
     return;
+}
+
+EthernetErrorCode ZephyrEthernet::configureInterface() {
+    if (_ethernetStatus == ETH_OK) {
+        struct net_if * iface = net_if_get_first_by_type(&NET_L2_GET_NAME(ETHERNET));
+
+        if (iface == nullptr) {
+            _ethernetStatus = INTERFACE_NOT_FOUND;
+            return _ethernetStatus;
+        }
+
+        struct in_addr addr;
+        struct in_addr mask;
+
+        if (net_addr_pton(AF_INET, MCU_IP_ADDR, &addr) != 0 ||
+            net_addr_pton(AF_INET, MCU_NETMASK, &mask) != 0 ||
+            net_if_ipv4_addr_add(iface, &addr, NET_ADDR_MANUAL, 0) == nullptr)
+        {
+            _ethernetStatus = FAILED_TO_SET_IP_ADDR;
+            return _ethernetStatus;
+        }
+
+        net_if_ipv4_set_netmask_by_addr(iface, &addr, &mask);
+    }
+    return _ethernetStatus;
 }
