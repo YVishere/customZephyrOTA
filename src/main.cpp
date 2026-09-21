@@ -5,7 +5,7 @@
 #include <zephyr/dfu/mcuboot.h>
 #include "const.h"
 #include "examplecan.h"
-#include "zephyrupdateethernet.h"
+#include "updatemanager_eth.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 

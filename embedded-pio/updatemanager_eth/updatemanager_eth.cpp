@@ -1,4 +1,4 @@
-#include "zephyrupdateethernet.h"
+#include "updatemanager_eth.h"
 #include "zephyrethernet.h"
 #include <zephyr/sys/atomic.h>
 
