@@ -1,5 +1,6 @@
 add_library(zephyrethernet STATIC
     zephyrethernet.cpp
+    otap.cpp
 )
 
 target_link_libraries(zephyrethernet PRIVATE zephyr_interface)

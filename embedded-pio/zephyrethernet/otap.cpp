@@ -1,4 +1,4 @@
-#include "OTAP.h"
+#include "otap.h"
 #include <cstdint>
 #include <zephyr/logging/log.h>
 
