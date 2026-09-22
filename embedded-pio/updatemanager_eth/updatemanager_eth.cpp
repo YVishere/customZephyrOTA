@@ -1,7 +1,7 @@
 #include "updatemanager_eth.h"
 #include "zephyrethernet.h"
 #include <zephyr/sys/atomic.h>
-
+#include <otap.h>
 #include <zephyr/logging/log.h>
 LOG_MODULE_REGISTER(ethupd, LOG_LEVEL_INF);
 static const int ETHERNET_BUFFER_SIZE = 512;
@@ -54,6 +54,8 @@ void ethernetUpdateTask(void * p1, void * p2, void * p3) {
                     bufferSize = 0;
                     memset(ethBuffer, 0, sizeof(ethBuffer));
                 }
+
+                if (eth)
                 break;
             default:
                 break;
