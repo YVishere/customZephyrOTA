@@ -1,10 +1,12 @@
 #include "updatemanager_eth.h"
 #include "zephyrethernet.h"
 #include <zephyr/sys/atomic.h>
-
+#include <otap.h>
 #include <zephyr/logging/log.h>
+#include <zephyr/sys/reboot.h>
+
 LOG_MODULE_REGISTER(ethupd, LOG_LEVEL_INF);
-static const int ETHERNET_BUFFER_SIZE = 512;
+static const int ETHERNET_BUFFER_SIZE = CONFIG_IMG_BLOCK_BUF_SIZE;
 
 typedef enum {
     WAIT_FOR_ETH_UPDATE = 0,
@@ -23,6 +25,7 @@ void stopEthernetPayload() {
 }
 
 void ethernetUpdateTask(void * p1, void * p2, void * p3) {
+    initSwapping();
     update_state_t currState = WAIT_FOR_ETH_UPDATE;
     update_state_t nextState = WAIT_FOR_ETH_UPDATE;
 
@@ -47,13 +50,19 @@ void ethernetUpdateTask(void * p1, void * p2, void * p3) {
                 }
                 break;
             case UPDATING_WITH_ETH:
+                writeToBackup(ethBuffer, bytesRead, false);
                 bufferSize += bytesRead;
-                if (bufferSize >= ETHERNET_BUFFER_SIZE)
-                {
-                    LOG_INF("Saw 512 bytes\n");
-                    bufferSize = 0;
+
+                if (ethBuffer[0] == 1 && ethBuffer[1] == 2) {
                     memset(ethBuffer, 0, sizeof(ethBuffer));
+                    nextState = ETH_UPDATE_DONE;
                 }
+                break;
+            case ETH_UPDATE_DONE:
+                writeToBackup(NULL, 0, true);
+                setWriteToBackupDone();
+                k_msleep(1000);
+                sys_reboot(SYS_REBOOT_COLD);
                 break;
             default:
                 break;

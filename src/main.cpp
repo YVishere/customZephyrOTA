@@ -4,6 +4,7 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/dfu/mcuboot.h>
 #include "const.h"
+#include "otap.h"
 #include "examplecan.h"
 #include "updatemanager_eth.h"
 

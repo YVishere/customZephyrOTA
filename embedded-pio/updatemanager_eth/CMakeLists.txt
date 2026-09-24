@@ -1,5 +1,6 @@
 add_library(updatemanager_eth STATIC
     updatemanager_eth.cpp
+    otap.cpp
 )
 
 target_link_libraries(updatemanager_eth PRIVATE zephyr_interface zephyrethernet)
