@@ -28,8 +28,6 @@ void initSwapping()
 }
 
 
-
-
 int writeToBackup(uint8_t * new_data,size_t	len, bool flush){
     
     size_t bytes_written = flash_img_bytes_written(&ctx);
@@ -42,9 +40,16 @@ int writeToBackup(uint8_t * new_data,size_t	len, bool flush){
 
 }
 
-
+// TODO: this should have a return value to indicate success or failure
 void setWriteToBackupDone(){
 
-    boot_request_upgrade(BOOT_UPGRADE_TEST);
+   int err = boot_request_upgrade(BOOT_UPGRADE_TEST);
+
+    if (err == -1) {
+        LOG_ERR("Failed to request upgrade: %d", err);
+    }
+
+// rturrn err;
+// TODO: make sure all memmory is freed
 
 }
