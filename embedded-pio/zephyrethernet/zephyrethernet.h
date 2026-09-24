@@ -22,6 +22,7 @@ typedef enum{
     PACKET_READ_TIMEOUT = 10,
     INTERFACE_NOT_FOUND = 11,
     FAILED_TO_SET_IP_ADDR = 12,
+    FAILED_TO_SEND = 13,
 } EthernetErrorCode;
 
 class ZephyrEthernet {
@@ -45,6 +46,12 @@ class ZephyrEthernet {
          */
         EthernetErrorCode getNextPacketImmediate(uint8_t * buffer, size_t bufferSize, size_t * bytesRead);
         bool packetReadyFifo() const;
+
+        /**
+         * Sends a datagram to the connected peer. Requires the context to have
+         * been connected, i.e. constructed with a peer IP and initEthernetDevice(true).
+         */
+        EthernetErrorCode sendPacket(const uint8_t * data, size_t len);
         
     private:
         EthernetErrorCode configureInterface(); 

@@ -58,12 +58,12 @@ def main() -> int:
                     help="local IP to send from, e.g. 192.168.1.2 (forces the right NIC)")
     ap.add_argument("--pad", type=lambda s: int(s, 0), default=0xFF,
                     help="fill byte for the final chunk's trailing bytes (default 0xFF)")
-    ap.add_argument("--gap", type=float, default=0.005,
-                    help="seconds between packets; must exceed the board's per-512B flash write "
-                         "or the 10-slot RX FIFO overflows and silently drops data (default 0.005)")
     ap.add_argument("--warmup", type=float, default=1.5,
                     help="seconds to wait before the START marker, so the board finishes "
-                         "boot_erase_img_bank + Ethernet init and has armed its receiver (default 1.5)")
+                         "Ethernet init and has armed its receiver (default 1.5)")
+    ap.add_argument("--ack-timeout", type=float, default=15.0,
+                    help="seconds to wait for each ACK. Must exceed the board's slot erase (the "
+                         "post-START ACK arrives only after that erase completes) (default 15)")
     ap.add_argument("--force", action="store_true",
                     help="send even if a data chunk collides with the END marker (01 02)")
     ap.add_argument("--dry-run", action="store_true", help="analyze and check collisions, send nothing")
@@ -113,26 +113,40 @@ def main() -> int:
         return 0
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    if args.bind:
-        sock.bind((args.bind, 0))
+    # Bind to the same port we send to, so the board's ACK (sent to its connected
+    # peer <bind>:<port>) lands back on this socket.
+    bind_ip = args.bind if args.bind else ""
+    sock.bind((bind_ip, args.port))
+    sock.settimeout(args.ack_timeout)
     dest = (args.ip, args.port)
 
+    def wait_ack(what: str):
+        try:
+            data, _ = sock.recvfrom(8)
+        except socket.timeout:
+            sys.exit(f"\nno ACK after {what} (>{args.ack_timeout:.0f}s) - aborting. "
+                     f"Board may not have finished erasing, or the link/ports are wrong.")
+        if data and data[0] != 0x00:
+            sys.exit(f"\nboard reported error 0x{data[0]:02x} after {what} - aborting "
+                     f"(likely a flash write failure; image is incomplete).")
+
     if args.warmup > 0:
-        print(f"\nwarmup {args.warmup:.1f}s (let the board erase slot + arm receiver) ...")
+        print(f"\nwarmup {args.warmup:.1f}s (let the board arm its receiver) ...")
         time.sleep(args.warmup)
 
+    t0 = time.time()
     sock.sendto(START_MARKER, dest)
-    print(f"-> START   {START_MARKER.hex(' ')}")
-    time.sleep(max(args.gap, 0.05))     # give the FSM a beat to enter UPDATING
+    print(f"-> START   {START_MARKER.hex(' ')}   (waiting for erase-done ACK, up to {args.ack_timeout:.0f}s)")
+    wait_ack("START (erase)")           # blocks through the slot erase - no fixed gap needed
+    print("<- ACK     erase done, streaming")
 
     sent = 0
-    t0 = time.time()
     for i, (off, pkt) in enumerate(packets):
         sock.sendto(pkt, dest)
+        wait_ack(f"data {i}")           # stop-and-wait: one packet per ACK, never overruns
         sent += len(pkt)
         if i % 32 == 0 or i == len(packets) - 1:
-            print(f"-> data {i:4d}/{len(packets)}  off 0x{off:06x}  ({sent}/{len(packets)*PAYLOAD} B on wire)")
-        time.sleep(args.gap)
+            print(f"-> data {i:4d}/{len(packets)}  off 0x{off:06x}  ({sent}/{len(packets)*PAYLOAD} B)")
 
     sock.sendto(END_MARKER, dest)
     dt = time.time() - t0

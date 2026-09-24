@@ -157,6 +157,15 @@ EthernetErrorCode ZephyrEthernet::getNextPacketImmediate(uint8_t * buffer, size_
     return getNextPacket(buffer, bufferSize, bytesRead, K_NO_WAIT);
 }
 
+EthernetErrorCode ZephyrEthernet::sendPacket(const uint8_t * data, size_t len) {
+    if (_udpContext == nullptr) {
+        return FAILED_TO_SEND;
+    }
+
+    int rc = net_context_send(_udpContext, data, len, NULL, K_NO_WAIT, NULL);
+    return (rc < 0) ? FAILED_TO_SEND : ETH_OK;
+}
+
 void ZephyrEthernet::setUDPContext(struct net_context *& udpContext, bool setRemoteDestAddr) {
 
     if (_ethernetStatus == ETH_OK || _ethernetStatus == FAILED_TO_BIND_CONTEXT ||

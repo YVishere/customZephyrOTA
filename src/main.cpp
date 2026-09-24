@@ -32,4 +32,4 @@ int main(void) {
     return 0;
 }
 
-K_THREAD_DEFINE(update_manager, 1024, ethernetUpdateTask, NULL, NULL, NULL, 7, 0, 0);
+K_THREAD_DEFINE(update_manager, 4096, ethernetUpdateTask, NULL, NULL, NULL, 7, 0, 0);
