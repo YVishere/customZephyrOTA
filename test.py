@@ -1,95 +1,144 @@
 #!/usr/bin/env python3
 """
-Drive the zephyrupdate state machine over UDP.
+Push a Zephyr/MCUboot-signed image to the board over the makeshift UDP protocol
+implemented in embedded-pio/updatemanager_eth/.
 
-The firmware FSM (zephyrupdateethernet.cpp):
+Firmware FSM (updatemanager_eth.cpp), buffer = CONFIG_IMG_BLOCK_BUF_SIZE = 512:
 
-  WAIT_FOR_ETH_UPDATE : accepts one packet whose first two bytes are the
-                        --init header (default 02 01), then -> UPDATING_WITH_ETH
-  UPDATING_WITH_ETH   : counts payload bytes, logs "Saw 512 bytes" at 512
+  WAIT_FOR_ETH_UPDATE : one packet starting  02 01  -> UPDATING_WITH_ETH
+  UPDATING_WITH_ETH   : every packet is written to slot1 via flash_img;
+                        a packet starting  01 02  -> ETH_UPDATE_DONE
+  ETH_UPDATE_DONE     : flush, boot_request_upgrade(TEST), reboot
 
-  1. send the init header packet  [--init]      -> arms UPDATING_WITH_ETH
-  2. send N data packets of --chunk bytes each  -> board counts bytes, logs at 512
+Wire protocol this script sends:
 
-Each data packet is filled with its own sequence number so the board's
-hexdump is legible: packet 0 = 00 00 00..., packet 1 = 01 01 01...
+  1. START marker      02 01                       (2 bytes, sent once)
+  2. N data packets    exactly 512 bytes each      (last one tail-padded)
+  3. END marker        01 02                        (2 bytes)
 
-NOTE ON THE FIRMWARE DOUBLE-READ: in UPDATING_WITH_ETH the task calls
-getNextPacket() twice per loop (top of loop + inside the case), so it
-CONSUMES two packets but COUNTS only one. Until that bug is fixed, the board
-needs 2x the data packets to reach 512 counted bytes. --match-firmware
-doubles the packet count so "Saw 512 bytes" actually fires against the code
-as written; drop it once the task reads once per iteration.
+The image goes to slot1 exactly as-is; the last chunk is padded ONLY in its
+trailing bytes (past the real image), which MCUboot ignores. No chunk is padded
+in the middle - that would shift the image and break the signature.
+
+NO FRAMING PROTECTION: a data packet whose first two bytes are the END marker
+(01 02) would be misread as end-of-transfer and truncate the image. This script
+scans for that before sending and refuses unless --force is given.
+
+Default image: build/customZephyrOTA/zephyr/zephyr.signed.bin  (the signed
+image linked for slot0; written to slot1, swapped in by MCUboot). Do NOT send
+zephyr.bin (unsigned) or the .hex.
 """
 import argparse
+import os
 import socket
 import sys
 import time
 
+PAYLOAD = 512                      # must equal CONFIG_IMG_BLOCK_BUF_SIZE
+START_MARKER = bytes([0x02, 0x01])
+END_MARKER = bytes([0x01, 0x02])
+DEFAULT_IMAGE = "build/customZephyrOTA/zephyr/zephyr.signed.bin"
 
-def parse_hex_bytes(s: str) -> bytes:
-    """Accept '02 01', '0201', or '0x02,0x01' -> b'\\x02\\x01'."""
-    cleaned = s.replace("0x", "").replace(",", " ").strip()
-    if " " in cleaned:
-        return bytes(int(tok, 16) for tok in cleaned.split())
-    if len(cleaned) % 2 != 0:
-        raise ValueError("hex string needs an even number of digits")
-    return bytes.fromhex(cleaned)
+
+def chunk_image(data: bytes, pad: int):
+    """Yield 512-byte packets; only the final one is tail-padded."""
+    for off in range(0, len(data), PAYLOAD):
+        piece = data[off:off + PAYLOAD]
+        if len(piece) < PAYLOAD:
+            piece = piece + bytes([pad]) * (PAYLOAD - len(piece))
+        yield off, piece
 
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("image", nargs="?", default=DEFAULT_IMAGE, help=f"signed image (default {DEFAULT_IMAGE})")
     ap.add_argument("--ip", default="192.168.1.1", help="board address (MCU_IP_ADDR)")
     ap.add_argument("--port", type=int, default=12345, help="board port (LOCAL_PORT)")
     ap.add_argument("--bind", default=None,
-                    help="local IP to send from, e.g. 192.168.1.2 (forces the right NIC on multi-homed hosts)")
-    ap.add_argument("--init", default="02 01",
-                    help="init header bytes the FSM waits for (hex). Default '02 01'.")
-    ap.add_argument("--chunk", type=int, default=64, help="bytes per data packet")
-    ap.add_argument("--packets", type=int, default=None,
-                    help="number of data packets (default: enough to reach --total)")
-    ap.add_argument("--total", type=int, default=512, help="bytes the board needs to see (ETHERNET_BUFFER_SIZE)")
-    ap.add_argument("--gap", type=float, default=0.02,
-                    help="seconds between packets; keeps the board's 10-slot FIFO from overflowing")
-    ap.add_argument("--match-firmware", action="store_true",
-                    help="double the data packets to compensate for the UPDATING double-read bug")
-    ap.add_argument("--no-init", action="store_true",
-                    help="skip the init header packet (board already in UPDATING_WITH_ETH)")
+                    help="local IP to send from, e.g. 192.168.1.2 (forces the right NIC)")
+    ap.add_argument("--pad", type=lambda s: int(s, 0), default=0xFF,
+                    help="fill byte for the final chunk's trailing bytes (default 0xFF)")
+    ap.add_argument("--gap", type=float, default=0.005,
+                    help="seconds between packets; must exceed the board's per-512B flash write "
+                         "or the 10-slot RX FIFO overflows and silently drops data (default 0.005)")
+    ap.add_argument("--warmup", type=float, default=1.5,
+                    help="seconds to wait before the START marker, so the board finishes "
+                         "boot_erase_img_bank + Ethernet init and has armed its receiver (default 1.5)")
+    ap.add_argument("--force", action="store_true",
+                    help="send even if a data chunk collides with the END marker (01 02)")
+    ap.add_argument("--dry-run", action="store_true", help="analyze and check collisions, send nothing")
     args = ap.parse_args()
 
-    if args.chunk < 1 or args.chunk > 512:
-        sys.exit("--chunk must be 1..512 (board reads into a 512-byte buffer)")
-
     try:
-        init = parse_hex_bytes(args.init)
-    except ValueError as e:
-        sys.exit(f"--init: {e}")
-    if len(init) < 2:
-        sys.exit("--init needs at least 2 bytes; the FSM checks buffer[0] and buffer[1]")
+        with open(args.image, "rb") as f:
+            image = f.read()
+    except OSError as e:
+        sys.exit(f"cannot read image: {e}")
 
-    n_packets = args.packets if args.packets is not None else -(-args.total // args.chunk)  # ceil
-    if args.match_firmware:
-        n_packets *= 2
+    if not image:
+        sys.exit("image is empty")
+    if not (0 <= args.pad <= 0xFF):
+        sys.exit("--pad must be a single byte 0..255")
+
+    packets = list(chunk_image(image, args.pad))
+    full = sum(1 for _, p in packets if p == image[_:_ + PAYLOAD])  # cosmetic
+    last_real = len(image) - (len(packets) - 1) * PAYLOAD
+    pad_bytes = PAYLOAD - last_real if last_real < PAYLOAD else 0
+
+    print(f"image      : {args.image}")
+    print(f"size       : {len(image)} bytes")
+    print(f"packets    : {len(packets)} x {PAYLOAD} B  (last chunk {last_real} real + {pad_bytes} pad = 0x{args.pad:02X})")
+    print(f"dest       : {args.ip}:{args.port}" + (f"  from {args.bind}" if args.bind else ""))
+
+    # Preflight: no data chunk may start with the END marker (no framing protection).
+    collisions = [off for off, p in packets if p[:2] == END_MARKER]
+    if collisions:
+        print(f"\n!! {len(collisions)} data chunk(s) start with the END marker {END_MARKER.hex(' ')} "
+              f"at image offset(s): {', '.join(hex(o) for o in collisions[:8])}"
+              + (" ..." if len(collisions) > 8 else ""))
+        print("   The firmware would treat the first as end-of-transfer and truncate the image.")
+        print("   Rebuild (the bytes change) or pass --force to send anyway (image will fail validation).")
+        if not args.force:
+            return 1
+
+    # Also flag a data chunk that looks like the START marker - harmless in UPDATING,
+    # but worth knowing if you ever move the check.
+    start_lookalikes = sum(1 for off, p in packets if p[:2] == START_MARKER)
+    if start_lookalikes:
+        print(f"   (note: {start_lookalikes} data chunk(s) start with {START_MARKER.hex(' ')}; "
+              f"harmless once past WAIT)")
+
+    if args.dry_run:
+        print("\ndry-run: nothing sent")
+        return 0
 
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     if args.bind:
         sock.bind((args.bind, 0))
     dest = (args.ip, args.port)
 
-    if not args.no_init:
-        sock.sendto(init, dest)
-        print(f"-> init    {init.hex(' ')}   (arms UPDATING_WITH_ETH)")
-        time.sleep(args.gap)
+    if args.warmup > 0:
+        print(f"\nwarmup {args.warmup:.1f}s (let the board erase slot + arm receiver) ...")
+        time.sleep(args.warmup)
+
+    sock.sendto(START_MARKER, dest)
+    print(f"-> START   {START_MARKER.hex(' ')}")
+    time.sleep(max(args.gap, 0.05))     # give the FSM a beat to enter UPDATING
 
     sent = 0
-    for i in range(n_packets):
-        payload = bytes([i & 0xFF]) * args.chunk
-        sock.sendto(payload, dest)
-        sent += len(payload)
-        print(f"-> data #{i:<3} {len(payload):3d} B  (running total {sent:4d})  first bytes: {payload[:4].hex(' ')} ...")
+    t0 = time.time()
+    for i, (off, pkt) in enumerate(packets):
+        sock.sendto(pkt, dest)
+        sent += len(pkt)
+        if i % 32 == 0 or i == len(packets) - 1:
+            print(f"-> data {i:4d}/{len(packets)}  off 0x{off:06x}  ({sent}/{len(packets)*PAYLOAD} B on wire)")
         time.sleep(args.gap)
 
-    print(f"\nsent init [{init.hex(' ')}] + {n_packets} data packets, {sent} data bytes, to {dest[0]}:{dest[1]}")
+    sock.sendto(END_MARKER, dest)
+    dt = time.time() - t0
+    print(f"-> END     {END_MARKER.hex(' ')}")
+    print(f"\nsent {len(packets)} data packets ({sent} B, {len(image)} real) in {dt:.1f}s. "
+          f"Board should flush, request TEST upgrade, and reboot.")
     sock.close()
     return 0
 

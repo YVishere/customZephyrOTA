@@ -8,6 +8,8 @@
 #include <stdint.h>
 #include <stddef.h>
 
-
+void initSwapping();
+int writeToBackup(uint8_t * new_data,size_t	len, bool flush);
+void setWriteToBackupDone();
 
 #endif

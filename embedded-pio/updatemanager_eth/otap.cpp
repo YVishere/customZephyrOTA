@@ -18,7 +18,7 @@ struct flash_img_context ctx;
 
 
 // intilizee the  flahs imiage context and 3
-void initSwapping(void)
+void initSwapping()
 {
     int err;
 
@@ -39,7 +39,7 @@ void initSwapping(void)
 }
 
 
-int writeToBackup(uint8_t * new_data,size_t	len, bool last){
+int writeToBackup(uint8_t * new_data,size_t	len, bool flush){
     
     size_t bytes_written = flash_img_bytes_written(&ctx);
 
@@ -47,13 +47,13 @@ int writeToBackup(uint8_t * new_data,size_t	len, bool last){
         return -1;
     }
 
-    return flash_img_buffered_write(&ctx, new_data, len, last);
+    return flash_img_buffered_write(&ctx, new_data, len, flush);
 
 }
 
 
 
-void writeToBackupDone(){
+void setWriteToBackupDone(){
 
     boot_request_upgrade(BOOT_UPGRADE_TEST);
 
