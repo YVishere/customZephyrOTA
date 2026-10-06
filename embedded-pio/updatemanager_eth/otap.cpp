@@ -5,19 +5,8 @@
 LOG_MODULE_REGISTER(OTAP_LOG, LOG_LEVEL_INF);
 
 
-
-
-// We need to create a set of methods thaat allow for somone to write to flash howver
-
-
-
-int offsset =0;
 struct flash_img_context ctx;
 
-// uint8_t area_id;
-
-
-// intilizee the  flahs imiage context and 3
 void initSwapping()
 {
     int err;
@@ -51,10 +40,16 @@ int writeToBackup(uint8_t * new_data,size_t	len, bool flush){
 
 }
 
-
-
+// TODO: this should have a return value to indicate success or failure
 void setWriteToBackupDone(){
 
-    boot_request_upgrade(BOOT_UPGRADE_TEST);
+   int err = boot_request_upgrade(BOOT_UPGRADE_TEST);
+
+    if (err == -1) {
+        LOG_ERR("Failed to request upgrade: %d", err);
+    }
+
+// rturrn err;
+// TODO: make sure all memmory is freed
 
 }
