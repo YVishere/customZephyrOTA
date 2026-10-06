@@ -4,13 +4,14 @@
 #include <zephyr/storage/flash_map.h>
 #include <zephyr/dfu/mcuboot.h>
 #include "const.h"
+#include "otap.h"
 #include "examplecan.h"
 #include "updatemanager_eth.h"
 
 LOG_MODULE_REGISTER(main, LOG_LEVEL_INF);
 
 int main(void) {
-    LOG_INF("Hello World %s\n", CONFIG_BOARD_TARGET);
+    LOG_INF("Hello World TEST----- %s\n", CONFIG_BOARD_TARGET);
     ExampleCAN canBus(canDev, CAN_IDS, sizeof(CAN_IDS)/sizeof(CAN_IDS[0]), CAN_FREQUENCY);
     canBus.begin();
 
@@ -31,4 +32,4 @@ int main(void) {
     return 0;
 }
 
-K_THREAD_DEFINE(update_manager, 1024, ethernetUpdateTask, NULL, NULL, NULL, 7, 0, 0);
+K_THREAD_DEFINE(update_manager, 4096, ethernetUpdateTask, NULL, NULL, NULL, 7, 0, 0);
